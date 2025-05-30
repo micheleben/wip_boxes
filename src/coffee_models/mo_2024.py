@@ -70,16 +70,14 @@ class SwellingParticle:
         self.c_b_boundary = 0.0  # Bulk concentration at particle surface
         
     def update_geometry(self):
-        """Update particle geometry based on swelling"""
-        # Calculate current radial positions from swelling
         for i in range(self.N_p):
             if i == 0:
                 self.r[i] = 0
             else:
-                # Numerical integration: r³ = R₀³ + 3∫[ξ²/(1-c_w(ξ))]dξ
                 integrand = self.R[1:i+1]**2 / (1 - self.c_w[1:i+1] + 1e-10)
                 integral = np.trapz(integrand, self.R[1:i+1])
-                self.r[i] = (3 * integral)**(1/3)
+                r_cubed = self.R[i]**3 + 3 * integral  # ← THIS LINE WAS MISSING!
+                self.r[i] = r_cubed**(1/3)
     
     def get_current_radius(self) -> float:
         """Get current outer radius of particle"""
