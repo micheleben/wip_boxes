@@ -164,19 +164,28 @@ class SwellingParticle:
         return max(flux, 0.0)
     
     def _build_swelling_matrix(self, dt: float):
-        """Build coefficient matrix for swelling equation"""
+        """Fixed implementation matching paper equation 41"""
         N = self.N_p
         A = np.zeros((N, N))
         
-        # Interior points
         for i in range(1, N-1):
-            D_eff = self.params.D_w * (1 - self.c_w[i])
+            # ✅ CORRECTED: Use (1-c_w)² factor from paper
+            D_eff = self.params.D_w * (1 - self.c_w[i])**2
             
-            # Central differences for Laplacian in spherical coordinates
-            # ∇²c_w = (1/R²)d/dR(R² dc_w/dR)
-            coeff_center = -2 * D_eff * dt / self.dR**2
-            coeff_plus = D_eff * dt / self.dR**2 * (1 + self.dR / (2 * self.R[i]))
-            coeff_minus = D_eff * dt / self.dR**2 * (1 - self.dR / (2 * self.R[i]))
+            # Get current radius for this material point
+            r_i = self.r[i] if hasattr(self, 'r') else self.R[i]
+            R_i = self.R[i]
+            
+            # Coordinate transformation factor
+            if R_i > 0:
+                geom_factor = (r_i/R_i)**2 * (1 - self.c_w[i])
+            else:
+                geom_factor = 1.0
+            
+            # Finite difference coefficients
+            coeff_center = -2 * D_eff * geom_factor * dt / self.dR**2
+            coeff_plus = D_eff * geom_factor * dt / self.dR**2 * (1 + self.dR/(2*R_i))
+            coeff_minus = D_eff * geom_factor * dt / self.dR**2 * (1 - self.dR/(2*R_i))
             
             A[i, i-1] = -coeff_minus
             A[i, i] = 1 - coeff_center
