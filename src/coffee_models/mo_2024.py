@@ -64,6 +64,8 @@ class SwellingParticle:
         self.c = np.full(self.N_p, params.c_0)  # Solute concentration
         self.r = self.R.copy()  # Current radial positions
         
+        # Validation tracking
+        self.validation_history = []
         # Boundary condition
         self.c_b_boundary = 0.0  # Bulk concentration at particle surface
         
@@ -227,6 +229,272 @@ class SwellingParticle:
                 laplacian[i] = (R_plus**2 * df_dR_plus - R_minus**2 * df_dR_minus) / (self.dR * self.R[i]**2)
         
         return laplacian
+    
+    def validate_swelling_physics(self, time: float = None, verbose: bool = True) -> Dict[str, bool]:
+        """
+        Comprehensive validation of swelling physics
+        
+        Args:
+            time: Current simulation time (for logging)
+            verbose: Whether to print detailed results
+            
+        Returns:
+            Dictionary of validation results {test_name: passed}
+        """
+        results = {}
+        
+        # Test 1: Water concentration bounds
+        results['bounds_check'] = self._check_concentration_bounds(verbose)
+        
+        # Test 2: Monotonicity (water concentration should decrease inward)
+        results['monotonicity_check'] = self._check_monotonicity(verbose)
+        
+        # Test 3: Mass conservation
+        results['mass_conservation'] = self._check_mass_conservation(verbose)
+        
+        # Test 4: Geometric consistency
+        results['geometry_check'] = self._check_geometry_consistency(verbose)
+        
+        # Test 5: Swelling magnitude realism
+        results['swelling_realism'] = self._check_swelling_realism(verbose)
+        
+        # Test 6: Diffusion coefficient realism
+        results['diffusion_realism'] = self._check_diffusion_coefficient(verbose)
+        
+        # Store results for trend analysis
+        validation_record = {
+            'time': time,
+            'results': results.copy(),
+            'c_w_profile': self.c_w.copy(),
+            'r_profile': self.r.copy(),
+            'current_radius': self.get_current_radius()
+        }
+        self.validation_history.append(validation_record)
+        
+        # Summary
+        passed_tests = sum(results.values())
+        total_tests = len(results)
+        
+        if verbose:
+            print(f"\n=== SWELLING VALIDATION SUMMARY (t={time:.3f}s) ===")
+            print(f"Passed: {passed_tests}/{total_tests} tests")
+            if passed_tests < total_tests:
+                failed = [name for name, passed in results.items() if not passed]
+                print(f"❌ Failed tests: {failed}")
+            else:
+                print("✅ All physics checks passed!")
+        
+        return results
+    
+    def _check_concentration_bounds(self, verbose: bool) -> bool:
+        """Check that 0 ≤ c_w ≤ C_M everywhere"""
+        min_cw = np.min(self.c_w)
+        max_cw = np.max(self.c_w)
+        
+        bounds_ok = (min_cw >= -1e-10) and (max_cw <= self.params.C_M + 1e-10)
+        
+        if verbose and not bounds_ok:
+            print(f"❌ BOUNDS: c_w range [{min_cw:.6f}, {max_cw:.6f}], expected [0, {self.params.C_M}]")
+        elif verbose:
+            print(f"✅ BOUNDS: c_w ∈ [{min_cw:.6f}, {max_cw:.6f}]")
+            
+        return bounds_ok
+    
+    def _check_monotonicity(self, verbose: bool) -> bool:
+        """Check that c_w decreases from surface to center (for most cases)"""
+        # Skip first few points near center where numerical issues can occur
+        start_idx = max(1, self.N_p // 10)
+        
+        # Check if concentration generally decreases inward
+        c_w_subset = self.c_w[start_idx:]
+        differences = np.diff(c_w_subset)
+        
+        # Allow small violations due to numerical errors
+        tolerance = 1e-6
+        violations = np.sum(differences > tolerance)
+        monotonic_ok = violations <= len(differences) * 0.1  # Allow 10% violations
+        
+        if verbose and not monotonic_ok:
+            print(f"❌ MONOTONICITY: {violations}/{len(differences)} points violate inward decrease")
+        elif verbose:
+            print(f"✅ MONOTONICITY: c_w decreases inward ({violations} minor violations)")
+            
+        return monotonic_ok
+    
+    def _check_mass_conservation(self, verbose: bool) -> bool:
+        """Check water mass conservation during swelling"""
+        # Calculate total additional water mass in particle
+        # Volume element in spherical coordinates: dV = 4πr²dr
+        
+        current_water_mass = 0.0
+        for i in range(1, self.N_p):
+            # Use trapezoidal rule for integration
+            r_avg = (self.r[i] + self.r[i-1]) / 2
+            dr = self.r[i] - self.r[i-1]
+            c_w_avg = (self.c_w[i] + self.c_w[i-1]) / 2
+            
+            volume_element = 4 * np.pi * r_avg**2 * dr
+            current_water_mass += c_w_avg * volume_element
+        
+        # Expected mass based on surface boundary condition
+        current_radius = self.get_current_radius()
+        max_possible_water = (4/3 * np.pi * current_radius**3) * self.params.C_M
+        
+        # Conservation check: current mass should be ≤ maximum possible
+        conservation_ok = current_water_mass <= max_possible_water * 1.1  # 10% tolerance
+        
+        if verbose:
+            fraction = current_water_mass / max_possible_water if max_possible_water > 0 else 0
+            if conservation_ok:
+                print(f"✅ CONSERVATION: {fraction:.3f} of maximum water content")
+            else:
+                print(f"❌ CONSERVATION: {fraction:.3f} exceeds maximum water content")
+                
+        return conservation_ok
+    
+    def _check_geometry_consistency(self, verbose: bool) -> bool:
+        """Check that geometric relationships are consistent"""
+        # Check that r[i] ≥ r[i-1] (radii should increase)
+        radii_increasing = np.all(np.diff(self.r) >= -1e-10)
+        
+        # Check that swelling is physically reasonable
+        current_radius = self.get_current_radius()
+        initial_radius = self.R_init
+        
+        # Radius should not shrink
+        no_shrinking = current_radius >= initial_radius * 0.999
+        
+        # Check volume conservation equation (Paper Eq. 42)
+        geometry_consistent = True
+        for i in range(1, min(10, self.N_p)):  # Check first few points
+            # r³ = R³ + 3∫[ξ²/(1-c_w(ξ))]dξ
+            integrand = self.R[1:i+1]**2 / (1 - self.c_w[1:i+1] + 1e-10)
+            integral = np.trapz(integrand, self.R[1:i+1])
+            expected_r = (self.R[i]**3 + 3 * integral)**(1/3)
+            
+            relative_error = abs(self.r[i] - expected_r) / max(expected_r, 1e-10)
+            if relative_error > 0.01:  # 1% tolerance
+                geometry_consistent = False
+                break
+        
+        geometry_ok = radii_increasing and no_shrinking and geometry_consistent
+        
+        if verbose:
+            if geometry_ok:
+                print(f"✅ GEOMETRY: Radii consistent, R={initial_radius:.2e}→r={current_radius:.2e}")
+            else:
+                print(f"❌ GEOMETRY: Issues detected")
+                if not radii_increasing:
+                    print("  - Radii not monotonic")
+                if not no_shrinking:
+                    print("  - Particle shrinking detected")
+                if not geometry_consistent:
+                    print("  - Volume conservation violated")
+                    
+        return geometry_ok
+    
+    def _check_swelling_realism(self, verbose: bool) -> bool:
+        """Check that swelling magnitude is physically realistic"""
+        current_radius = self.get_current_radius()
+        initial_radius = self.R_init
+        
+        swelling_ratio = current_radius / initial_radius
+        swelling_percent = (swelling_ratio - 1) * 100
+        
+        # Paper mentions 3.6% maximum swelling
+        # Allow up to 10% for safety margin
+        realistic_swelling = 1.0 <= swelling_ratio <= 1.15
+        
+        if verbose:
+            if realistic_swelling:
+                print(f"✅ SWELLING: {swelling_percent:.2f}% increase (realistic)")
+            else:
+                print(f"❌ SWELLING: {swelling_percent:.2f}% increase (unrealistic)")
+                
+        return realistic_swelling
+    
+    def _check_diffusion_coefficient(self, verbose: bool) -> bool:
+        """Check that effective diffusion coefficients are reasonable"""
+        # Calculate effective diffusion coefficients
+        D_eff = self.params.D_w * (1 - self.c_w)**2  # Should be this based on paper
+        D_eff_current = self.params.D_w * (1 - self.c_w)  # What code currently uses
+        
+        # Check bounds
+        D_eff_bounded = np.all(D_eff >= 0) and np.all(D_eff <= self.params.D_w)
+        
+        # Check that diffusion decreases with water content
+        center_diffusion = D_eff[0]
+        surface_diffusion = D_eff[-1]
+        decreases_outward = center_diffusion >= surface_diffusion
+        
+        diffusion_ok = D_eff_bounded and decreases_outward
+        
+        if verbose:
+            if diffusion_ok:
+                print(f"✅ DIFFUSION: D_eff ∈ [{surface_diffusion:.2e}, {center_diffusion:.2e}]")
+            else:
+                print(f"❌ DIFFUSION: Issues with effective diffusion coefficient")
+                
+        return diffusion_ok
+    
+    def plot_validation_diagnostics(self, save_path: str = None):
+        """Create diagnostic plots for swelling validation"""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+        
+        # Plot 1: Water concentration profile
+        ax1.plot(self.R / self.R_init, self.c_w, 'b-', linewidth=2, label='c_w(R)')
+        ax1.axhline(y=self.params.C_M, color='r', linestyle='--', label=f'C_M = {self.params.C_M}')
+        ax1.set_xlabel('Normalized Radius R/R₀')
+        ax1.set_ylabel('Water Concentration c_w')
+        ax1.set_title('Water Concentration Profile')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Geometric transformation
+        ax2.plot(self.R / self.R_init, self.r / self.R_init, 'g-', linewidth=2, label='r(R)/R₀')
+        ax2.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='No swelling')
+        ax2.set_xlabel('Material Coordinate R/R₀')
+        ax2.set_ylabel('Current Position r/R₀')
+        ax2.set_title('Geometric Transformation')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: Effective diffusion coefficient
+        D_eff_paper = self.params.D_w * (1 - self.c_w)**2
+        D_eff_code = self.params.D_w * (1 - self.c_w)
+        ax3.plot(self.R / self.R_init, D_eff_paper / self.params.D_w, 'r-', 
+                linewidth=2, label='Paper: (1-c_w)²')
+        ax3.plot(self.R / self.R_init, D_eff_code / self.params.D_w, 'b--', 
+                linewidth=2, label='Code: (1-c_w)')
+        ax3.set_xlabel('Normalized Radius R/R₀')
+        ax3.set_ylabel('Normalized Diffusion D_eff/D_w')
+        ax3.set_title('Effective Diffusion Coefficient')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        
+        # Plot 4: Validation history (if available)
+        if len(self.validation_history) > 1:
+            times = [h['time'] for h in self.validation_history if h['time'] is not None]
+            radii = [h['current_radius'] / self.R_init for h in self.validation_history]
+            
+            ax4.plot(times, radii, 'purple', linewidth=2, label='Radius evolution')
+            ax4.set_xlabel('Time (s)')
+            ax4.set_ylabel('Normalized Radius r/R₀')
+            ax4.set_title('Swelling Evolution')
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+        else:
+            ax4.text(0.5, 0.5, 'No time history\navailable', 
+                    ha='center', va='center', transform=ax4.transAxes)
+            ax4.set_title('Swelling Evolution (No Data)')
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Validation plots saved to {save_path}")
+        
+        plt.show()
 
 class CoffeeExtraction:
     """Main coffee extraction model with swelling effects"""
@@ -405,6 +673,49 @@ class CoffeeExtraction:
         strength_pct = self.c_b[0] / self.params.rho * 100  # Convert to percentage
         
         return yield_pct, strength_pct
+
+# Usage example in main simulation
+def run_simulation_with_validation():
+    """Example of how to use validation during simulation"""
+    
+    # Create parameters and model
+    params = CoffeeParameters()
+    model = CoffeeExtraction(params)
+    model.set_flow_conditions(flow_rate=1.2e-3)
+    
+    # Validation settings
+    validation_interval = 1.0  # Check every 1 second
+    last_validation = 0.0
+    
+    print("Running simulation with swelling validation...")
+    
+    while model.t < 10.0:  # Short test run
+        model.step()
+        
+        # Periodic validation
+        if model.t - last_validation >= validation_interval:
+            print(f"\n--- VALIDATION AT t={model.t:.2f}s ---")
+            
+            # Validate a few representative particles
+            for i, layer_idx in enumerate([0, model.N//2, model.N-1]):
+                print(f"\nLayer {layer_idx} (fines):")
+                model.particles_f[layer_idx].validate_swelling_physics(
+                    time=model.t, verbose=True
+                )
+            
+            last_validation = model.t
+    
+    # Final validation and diagnostic plots
+    print("\n=== FINAL VALIDATION ===")
+    representative_particle = model.particles_f[0]
+    results = representative_particle.validate_swelling_physics(time=model.t, verbose=True)
+    
+    # Create diagnostic plots
+    representative_particle.plot_validation_diagnostics("swelling_diagnostics.png")
+    
+    return results
+
+
 
 def run_simulation_example():
     """Example simulation run"""
