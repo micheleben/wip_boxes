@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.sparse import diags
 from scipy.sparse.linalg import spsolve
 from dataclasses import dataclass
-from typing import Tuple, List
+from typing import Tuple, List, Dict
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -798,4 +798,28 @@ def run_simulation_example():
     print(f"Porosity change: {params.eps_b_init:.3f} → {porosities[-1]:.3f}")
 
 if __name__ == "__main__":
-    run_simulation_example()
+    # test a particle
+    # Create a test particle
+    myparams = CoffeeParameters()
+    test_particle = SwellingParticle(radius_init=100e-6, params=myparams)
+
+    # Run a few time steps
+    for i in range(10):
+        test_particle.step_swelling(dt=0.001)
+        
+        # Validate every few steps
+        if i % 3 == 0:
+            results = test_particle.validate_swelling_physics(
+                time=i*0.001, 
+                verbose=True
+            )
+            
+            # Look for the diffusion coefficient issue
+            if not results['diffusion_realism']:
+                print("Found the (1-c_w) vs (1-c_w)² issue!")
+                test_particle.plot_validation_diagnostics()
+                break
+    
+    #run_simulation_example()
+
+
