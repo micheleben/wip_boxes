@@ -8,55 +8,58 @@ This Python script, monzo_playground_token.py, is designed to be a Monzo Expense
 
 Here's a breakdown of what it does:
 
-Direct API Interaction:
+1. **Direct API Interaction:**
 
-It uses the requests library to make direct HTTP calls to the Monzo API (https://api.monzo.com).
-It requires an access_token and account_id for authentication and to specify which account's transactions to fetch. These are initially loaded from a monzo_direct_config.json file or, if the file doesn't exist, prompted from the user and then saved.
-Transaction Fetching:
+    *   It uses the requests library to make direct HTTP calls to the Monzo API (https://api.monzo.com).
+    * It requires an access_token and account_id for authentication and to specify which account's transactions to fetch. These are initially loaded from a 'monzo_config.json' file or prompted from the user if the file doesn't exist.
+    monzo_direct_config.json file or, if the file doesn't exist, prompted from the user and then saved.
+2. **Transaction Fetching:**
 
-The fetch_transactions method retrieves transactions for the specified account.
-It can fetch all transactions and then filters them locally for a specified number of past days (defaulting to 90).
-It includes an expand[]=merchant parameter in the API call to get detailed merchant information.
-It handles potential API errors and creates an empty DataFrame if fetching fails.
-It skips transactions marked as 'topup' in their metadata (internal transfers/conversions).
-The fetched transaction data (ID, date, description, amount, currency, category, merchant name) is converted into a Pandas DataFrame.
-Data Storage and Loading:
+    The fetch_transactions method retrieves transactions for the specified account.
+    * It can fetch all transactions and then filters them locally for a specified number of past days (defaulting to 90).
+    * It includes an expand[]=merchant parameter in the API call to get detailed merchant information.
+    * It handles potential API errors and creates an empty DataFrame if fetching fails.
+    * It skips transactions marked as 'topup' in their metadata (internal transfers/conversions).
+    The fetched transaction data (ID, date, description, amount, currency, category, merchant name) is converted into a Pandas DataFrame.
+3. **Data Storage and Loading:**
 
-Fetched transactions are saved locally to a JSON file (monzo_data.json). The date is converted to a string format (%Y-%m-%dT%H:%M:%SZ) before saving.
-The script can load previously saved transactions from this file using load_transactions, converting the date strings back to datetime objects. This avoids re-fetching data every time.
-Recurring Expense Management:
+   * Fetched transactions are saved locally to a JSON file (monzo_data.json). The date is converted to a string format (%Y-%m-%dT%H:%M:%SZ) before saving.
+   * The script can load previously saved transactions from this file using load_transactions, converting the date strings back to datetime objects. This avoids re-fetching data every time.
 
-It allows users to define a list of "recurring merchants." This list is stored in recurring_merchants.json.
-The identify_recurring_expenses method analyzes transactions, counts merchant occurrences, and suggests potential recurring merchants (those appearing at least twice). The user can then choose to add these to their recurring list.
-Users can manually add or remove merchants from the recurring list.
-Expense Categorization and Summary:
+4. **Recurring Expense Management:**
 
-categorize_expenses splits expenses (transactions with negative amounts) into "recurring" (based on the recurring_merchants list) and "extra."
-generate_summary provides a text-based summary, including:
-Total transactions, total expenses, number of recurring and extra expenses.
-Total amount spent.
-Breakdown of recurring vs. extra expenses (amount and percentage).
-Spending by category (amount and percentage).
-A list of recurring expenses by merchant and their total amounts.
-It handles cases with no transactions or no expenses gracefully.
-Expense Visualization:
+   * It allows users to define a list of "recurring merchants." This list is stored in recurring_merchants.json.
+   * The identify_recurring_expenses method analyzes transactions, counts merchant occurrences, and suggests potential recurring merchants (those appearing at least twice). The user can then choose to add these to their recurring list.
+   * Users can manually add or remove merchants from the recurring list.
+     
+5. **Expense Categorization and Summary:**
 
-visualize_expenses uses matplotlib to create and save two plots:
-expense_summary.png: A figure with two subplots:
-A pie chart showing the proportion of recurring vs. extra expenses.
-A bar chart showing the top 5 expense categories.
-monthly_spending.png: A stacked bar chart showing monthly spending, broken down into recurring and extra.
-It also handles cases where there's no data to visualize.
-Command-Line Interface (CLI):
+    * categorize_expenses splits expenses (transactions with negative amounts) into "recurring" (based on the recurring_merchants list) and "extra."
+    * generate_summary provides a text-based summary, including:
+    * Total transactions, total expenses, number of recurring and extra expenses.
+    * Total amount spent.
+    * Breakdown of recurring vs. extra expenses (amount and percentage).
+    * Spending by category (amount and percentage).
+    * A list of recurring expenses by merchant and their total amounts.
+    * It handles cases with no transactions or no expenses gracefully.
+6. **Expense Visualization:**
 
-The main() function provides a simple menu-driven CLI for users to interact with the tracker.
-Options include:
-Identifying recurring expenses.
-Viewing the expense summary.
-Visualizing expenses.
-Managing the list of recurring merchants (add/remove).
-Fetching new transactions.
-Exiting the application.
+    * visualize_expenses uses matplotlib to create and save two plots:
+    * expense_summary.png: A figure with two subplots:
+    * A pie chart showing the proportion of recurring vs. extra expenses.
+    * A bar chart showing the top 5 expense categories.
+    * monthly_spending.png: A stacked bar chart showing monthly spending, broken down into recurring and extra.
+    * It also handles cases where there's no data to visualize.
+7. **Command-Line Interface (CLI):**
+
+    *   The main() function provides a simple menu-driven CLI for users to interact with the tracker.
+    * Options include:
+        * Identifying recurring expenses.
+        * Viewing the expense summary.
+        * Visualizing expenses.
+        * Managing the list of recurring merchants (add/remove).
+        * Fetching new transactions.
+        * Exiting the application.
 
 ## script_to_check_monzo_v11.py
 
