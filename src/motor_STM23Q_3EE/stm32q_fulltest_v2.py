@@ -171,7 +171,7 @@ class STM23QController:
         return response_str
     
     def send_command(self, command: str, expect_response: bool = True, 
-                    expected_ack: str = None, verbose: bool = None) -> Optional[str]:
+                    expected_ack: Optional[str] = None, verbose: Optional[bool] = None) -> Optional[str]:
         """
         Send command to motor controller with proper acknowledgment checking
         
