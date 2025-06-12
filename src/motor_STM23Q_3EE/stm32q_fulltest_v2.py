@@ -330,7 +330,7 @@ class STM23QController:
     def initialize_motor(self, current_amps: float = 3.0, microsteps_per_rev: int = 25600, 
                         max_velocity: float = 10.0) -> bool:
         """
-        Complete motor initialization sequence
+        Complete motor initialization sequence with enhanced debugging
         
         Args:
             current_amps: Motor running current in amps
@@ -344,12 +344,44 @@ class STM23QController:
             print("✗ Cannot initialize - drive has alarms")
             return False
         
-        # Motor setup sequence
+        # Test current command format first
+        print("  Testing current command format...")
+        
+        # Try different current command formats to see which works
+        test_current = 2.0
+        current_formats = [
+            f"CC{test_current}",      # CC2.0
+            f"CC{int(test_current)}", # CC2  
+            f"CC{test_current:.1f}",  # CC2.0
+        ]
+        
+        working_format = None
+        for fmt in current_formats:
+            print(f"    Trying format: {fmt}")
+            # First ensure motor is disabled
+            self.send_command("MD", expected_ack="%", verbose=self.debug_mode)
+            time.sleep(0.2)
+            
+            response = self.send_command(fmt, verbose=self.debug_mode)
+            if response == "*":
+                print(f"    ✓ Format {fmt} works!")
+                working_format = fmt.replace(str(test_current), "{}")
+                break
+            elif response:
+                print(f"    ⚠️  Got response '{response}' instead of '*'")
+            else:
+                print(f"    ✗ No response for {fmt}")
+        
+        if not working_format:
+            print("✗ Cannot find working current command format")
+            return False
+        
+        # Motor setup sequence with working format
         setup_commands = [
             # Basic motor parameters
             ("MD", "%", "Disable motor for setup"),
-            (f"CC{current_amps}", "*", f"Set running current to {current_amps}A"),
-            (f"CI{current_amps/2}", "*", f"Set idle current to {current_amps/2}A"),
+            (working_format.format(current_amps), "*", f"Set running current to {current_amps}A"),
+            (working_format.format(current_amps/2), "*", f"Set idle current to {current_amps/2}A"),
             ("CD1.0", "*", "Set idle current delay to 1.0s"),
             (f"EG{microsteps_per_rev}", "*", f"Set resolution to {microsteps_per_rev} steps/rev"),
             
@@ -373,11 +405,22 @@ class STM23QController:
         
         for command, expected_ack, description in setup_commands:
             print(f"  {description}...")
-            response = self.send_command(command, expected_ack=expected_ack, verbose=False)
+            response = self.send_command(command, expected_ack=expected_ack, verbose=self.debug_mode)
             if not response:
                 print(f"✗ Failed: {description}")
+                print(f"    Command: {command}")
+                print(f"    Expected: {expected_ack}")
+                print(f"    Got: {response}")
+                
+                # Try to get more info about why it failed
+                print("    Checking drive status...")
+                status_response = self.send_command("SC", verbose=True)
+                alarm_response = self.send_command("AL", verbose=True)
+                print(f"    Status: {status_response}")
+                print(f"    Alarms: {alarm_response}")
+                
                 return False
-            time.sleep(0.1)  # Small delay between commands
+            time.sleep(0.15)  # Slightly longer delay between commands
         
         # Verify motor is enabled and ready
         status = self.get_motor_status()
@@ -842,6 +885,7 @@ def interactive_motor_demo(controller: STM23QController):
     print("  status            - Show detailed motor status")
     print("  debug on/off      - Enable/disable debug mode")
     print("  test              - Run connection tests")
+    print("  cmd <command>     - Send manual command (e.g., 'cmd CC3')")
     print("  enable            - Enable motor")
     print("  disable           - Disable motor")
     print("  alarms            - Check and clear alarms")
@@ -923,6 +967,16 @@ def interactive_motor_demo(controller: STM23QController):
             elif command.lower() == "alarms":
                 if controller.check_alarms():
                     print("✓ No alarms present")
+                    
+            elif command.lower().startswith("cmd "):
+                # Manual command testing
+                try:
+                    cmd_part = command[4:].strip()
+                    print(f"Sending manual command: {cmd_part}")
+                    response = controller.send_command(cmd_part, verbose=True)
+                    print(f"Response: {response}")
+                except Exception as e:
+                    print(f"Error: {e}")
                     
             elif command.lower() in ["help", "?"]:
                 print("\nCommands: init, spin <rpm>, speed <rpm>, stop, stop!, status, debug on/off, test, enable, disable, alarms, quit")
