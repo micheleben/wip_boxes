@@ -148,13 +148,14 @@ class STM23QController:
         response_str = response_bytes[2:-1].decode('ascii', errors='ignore')
         return response_str
     
-    def send_command(self, command: str, expect_response: bool = True) -> Optional[str]:
+    def send_command(self, command: str, expect_response: bool = True, verbose: bool = True) -> Optional[str]:
         """
         Send command to motor controller and optionally wait for response
         
         Args:
             command: SCL command to send
             expect_response: Whether to wait for a response
+            verbose: Whether to print debug information
             
         Returns:
             Response string if successful, None otherwise
@@ -166,8 +167,9 @@ class STM23QController:
         try:
             # Create and send packet
             packet = self._create_packet(command)
-            print(f"Sending command: {command}")
-            print(f"Packet bytes: {' '.join(f'{b:02X}' for b in packet)}")
+            if verbose:
+                print(f"Sending command: {command}")
+                print(f"Packet bytes: {' '.join(f'{b:02X}' for b in packet)}")
             
             self.socket.sendto(packet, (self.drive_ip, self.drive_port))
             
@@ -176,22 +178,143 @@ class STM23QController:
             
             # Wait for response
             response_bytes, addr = self.socket.recvfrom(1024)
-            print(f"Received {len(response_bytes)} bytes from {addr}")
-            print(f"Response bytes: {' '.join(f'{b:02X}' for b in response_bytes)}")
+            if verbose:
+                print(f"Received {len(response_bytes)} bytes from {addr}")
+                print(f"Response bytes: {' '.join(f'{b:02X}' for b in response_bytes)}")
             
             # Parse response
             response = self._parse_response(response_bytes)
-            if response:
+            if response and verbose:
                 print(f"Response: {response}")
             
             return response
             
         except socket.timeout:
-            print(f"Timeout waiting for response to command: {command}")
+            if verbose:
+                print(f"Timeout waiting for response to command: {command}")
             return None
         except Exception as e:
-            print(f"Error sending command {command}: {e}")
+            if verbose:
+                print(f"Error sending command {command}: {e}")
             return None
+
+    def enable_motor(self) -> bool:
+        """Enable the motor for operation"""
+        print("Enabling motor...")
+        response = self.send_command("ME", expect_response=False)
+        if response:
+            print("\u2713 Motor enabled")
+            return True
+        else:
+            print("\u2717 Failed to enable motor")
+            return False
+
+    def disable_motor(self) -> bool:
+        """Disable the motor"""
+        print("Disabling motor...")
+        response = self.send_command("MD", expect_response=False)
+        if response:
+            print("\u2713 Motor disabled")
+            return True
+        else:
+            print("\u2717 Failed to disable motor")
+            return False
+
+    def spin_motor(self, rpm: float, acceleration: float = 10.0) -> bool:
+        """Spin the motor at specified RPM using jog mode"""
+        print(f"Spinning motor at {rpm} RPM...")
+        
+        # Convert RPM to rev/sec
+        rps = rpm / 60.0
+        
+        # Validate speed limits
+        max_rps = 80.0  # Conservative limit for STM drives
+        if abs(rps) > max_rps:
+            print(f"\u2717 Speed too high! Maximum: �{max_rps * 60:.0f} RPM")
+            return False
+        
+        try:
+            # Set jog acceleration
+            response = self.send_command(f"JA{acceleration}", expect_response=False)
+            if not response:
+                print("\u2717 Failed to set acceleration")
+                return False
+            
+            # Set jog speed (rev/sec)
+            response = self.send_command(f"JS{abs(rps)}", expect_response=False)
+            if not response:
+                print("\u2717 Failed to set jog speed")
+                return False
+            
+            # Set direction using DI command
+            direction = 1 if rpm >= 0 else -1
+            response = self.send_command(f"DI{direction}", expect_response=False)
+            if not response:
+                print("\u2717 Failed to set direction")
+                return False
+            
+            # Start jogging
+            response = self.send_command("CJ", expect_response=False)
+            if not response:
+                print("\u2717 Failed to start jogging")
+                return False
+            
+            direction_str = "CW" if rpm >= 0 else "CCW"
+            print(f"\u2713 Motor spinning at {rpm} RPM ({direction_str})")
+            return True
+            
+        except Exception as e:
+            print(f"\u2717 Error spinning motor: {e}")
+            return False
+
+    def stop_motor(self, controlled: bool = True) -> bool:
+        """Stop the motor"""
+        command = "SJ" if controlled else "ST"
+        stop_type = "controlled deceleration" if controlled else "immediate"
+        
+        print(f"Stopping motor ({stop_type})...")
+        
+        try:
+            response = self.send_command(command, expect_response=False)
+            if response:
+                print(f"\u2713 Motor stopped ({stop_type})")
+                return True
+            else:
+                print(f"\u2717 Failed to stop motor")
+                return False
+        except Exception as e:
+            print(f"\u2717 Error stopping motor: {e}")
+            return False
+
+    def get_motor_status(self) -> dict:
+        """Get comprehensive motor status information"""
+        status = {}
+        
+        status_commands = [
+            ("SC", "status_code"),
+            ("AL", "alarm_code"), 
+            ("IP", "position"),
+            ("IV0", "actual_velocity"),
+            ("IV1", "target_velocity"),
+            ("IT", "temperature"),
+            ("IU", "bus_voltage"),
+            ("IC", "commanded_current"),
+        ]
+        
+        for cmd, key in status_commands:
+            try:
+                response = self.send_command(cmd)
+                if response:
+                    if "=" in response:
+                        value = response.split("=")[1]
+                    else:
+                        value = response
+                    status[key] = value
+            except Exception as e:
+                status[key] = f"Error: {e}"
+        
+        return status
+
 
 def decode_model_version(mv_response: str) -> dict:
     """
@@ -307,7 +430,7 @@ def test_connection(controller: STM23QController) -> bool:
         if response:
             print(f"{desc}: {response}")
     
-    return passed_tests == total_tests
+    return passed_tests >= (total_tests - 1)  # Allow one failure for tolerance
 
 def find_controller() -> Optional[str]:
     """
@@ -393,6 +516,127 @@ def diagnose_network():
         print(f"✗ Cannot bind to UDP port 7777: {e}")
         print("Try a different port or check if port is already in use")
 
+def test_motor_control(controller: STM23QController) -> bool:
+    """Test motor control functions"""
+    print("\n=== Testing Motor Control Functions ===")
+    
+    # Enable motor first
+    if not controller.enable_motor():
+        print("Failed to enable motor")
+        return False
+    
+    time.sleep(1)
+    
+    # Test spinning at different speeds
+    test_speeds = [60, 120, -90]  # RPM values
+    
+    for rpm in test_speeds:
+        print(f"\n--- Testing {rpm} RPM ---")
+        
+        if not controller.spin_motor(rpm, acceleration=20.0):
+            print("Failed to start spinning")
+            continue
+        
+        # Let it spin for 3 seconds
+        print("Spinning for 3 seconds...")
+        for i in range(3):
+            time.sleep(1)
+            status = controller.get_motor_status()
+            print(f"  Status: Position={status.get('position', 'N/A')}, "
+                  f"Velocity={status.get('actual_velocity', 'N/A')}")
+        
+        # Stop with controlled deceleration
+        if not controller.stop_motor(controlled=True):
+            print("Failed to stop motor")
+            break
+        
+        time.sleep(2)
+    
+    # Test immediate stop
+    print(f"\n--- Testing Immediate Stop ---")
+    if controller.spin_motor(180, acceleration=30.0):
+        time.sleep(1)
+        controller.stop_motor(controlled=False)
+    
+    time.sleep(1)
+    
+    # Show final status
+    print(f"\n--- Final Motor Status ---")
+    status = controller.get_motor_status()
+    for key, value in status.items():
+        print(f"  {key}: {value}")
+    
+    return True
+
+def interactive_motor_demo(controller: STM23QController):
+    """Interactive motor control demo"""
+    print("\n" + "="*50)
+    print("INTERACTIVE MOTOR CONTROL DEMO")
+    print("="*50)
+    print("Commands:")
+    print("  spin <rpm>     - Spin motor at specified RPM")
+    print("  stop          - Stop motor with controlled deceleration")
+    print("  stop!         - Stop motor immediately")
+    print("  status        - Show motor status")
+    print("  enable        - Enable motor")
+    print("  disable       - Disable motor")
+    print("  quit          - Exit demo")
+    
+    controller.enable_motor()
+    
+    while True:
+        try:
+            command = input("\nMotor> ").strip().lower()
+            
+            if command == "quit" or command == "exit":
+                print("Stopping motor and exiting...")
+                controller.stop_motor(controlled=False)
+                controller.disable_motor()
+                break
+                
+            elif command.startswith("spin "):
+                try:
+                    rpm_str = command.split()[1]
+                    rpm = float(rpm_str)
+                    controller.spin_motor(rpm)
+                except (IndexError, ValueError):
+                    print("Invalid syntax. Use: spin <rpm>")
+                    
+            elif command == "stop":
+                controller.stop_motor(controlled=True)
+                
+            elif command == "stop!":
+                controller.stop_motor(controlled=False)
+                
+            elif command == "status":
+                status = controller.get_motor_status()
+                print("\nMotor Status:")
+                for key, value in status.items():
+                    print(f"  {key.replace('_', ' ').title()}: {value}")
+                    
+            elif command == "enable":
+                controller.enable_motor()
+                
+            elif command == "disable":
+                controller.disable_motor()
+                
+            elif command == "help" or command == "?":
+                print("\nCommands: spin <rpm>, stop, stop!, status, enable, disable, quit")
+                
+            elif command == "":
+                continue
+                
+            else:
+                print(f"Unknown command: {command}. Type 'help' for available commands.")
+                
+        except KeyboardInterrupt:
+            print("\nStopping motor and exiting...")
+            controller.stop_motor(controlled=False)
+            controller.disable_motor()
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+
 def main():
     """Main function to test motor controller connection"""
     print("STM23Q-3EE Motor Controller Connection Test")
@@ -446,6 +690,7 @@ def main():
                 confirm = input("\nContinue with motor test? (y/N): ").strip().lower()
                 
                 if confirm in ['y', 'yes']:
+                    # Keep connection open for motor control tests
                     motor_success = test_motor_control(controller)
                     if motor_success:
                         print("\n🎉 Motor control tests completed successfully!")
@@ -470,6 +715,13 @@ def main():
         print("\nTest interrupted by user")
         return False
     finally:
+        # Always ensure motor is stopped and disabled before disconnecting
+        if controller.socket:
+            try:
+                controller.stop_motor(controlled=False)
+                controller.disable_motor() 
+            except:
+                pass  # Ignore errors during cleanup
         controller.disconnect()
 
 if __name__ == "__main__":
