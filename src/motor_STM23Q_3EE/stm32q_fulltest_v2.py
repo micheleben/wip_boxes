@@ -673,7 +673,7 @@ class STM23QController:
         print(f"Changing speed to {new_rpm} RPM...")
         
         response = self.send_command(f"CS{rps}", verbose=False)
-        if response and response.startswith("CS="):
+        if response =="%": # correct one to match driver response (it seems different in the documentation)
             print(f"✓ Speed changed to {new_rpm} RPM")
             return True
         else:
