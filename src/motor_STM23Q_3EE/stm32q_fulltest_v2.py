@@ -548,7 +548,7 @@ class STM23QController:
         print(f"Spinning motor at {rpm} RPM...")
         
         # Convert RPM to rev/sec
-        rps = abs(rpm) / 60.0
+        rps = round(abs(rpm) / 60.0,3) # avoid formatting errors due to long floats
         direction = 1 if rpm >= 0 else -1
         
         # Validate speed limits
@@ -575,7 +575,9 @@ class STM23QController:
                 if not response:
                     print(f"✗ Failed to {description.lower()}")
                     return False
-                time.sleep(0.05)  # Small delay between commands
+                time.sleep(0.1)  # Small delay between commands -> 
+                # the above sleep time was 0.05 and have been increased to 0.1
+                # to avoid ?4 error on AL command  
             
             # Start jogging
             response = self.send_command("CJ", expected_ack="%", verbose=False)
@@ -661,7 +663,7 @@ class STM23QController:
             print("✗ Motor not initialized")
             return False
         
-        rps = new_rpm / 60.0
+        rps = round(new_rpm / 60.0, 3) # avoid formatting errors due to long floats
         
         # Validate speed
         if abs(rps) > 10.0:
