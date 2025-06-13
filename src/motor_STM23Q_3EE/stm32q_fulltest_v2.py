@@ -273,7 +273,7 @@ class STM23QController:
     def decode_alarm_code(self, alarm_hex: str) -> str:
         """Decode alarm code to human readable description"""
         try:
-            alarm_int = int(alarm_hex, 16)  # Convert hex to int
+            alarm_int = int(alarm_hex, 16)
             alarms = []
             
             alarm_bits = {
@@ -292,17 +292,14 @@ class STM23QController:
                 0x2000: "Current Foldback"
             }
             
-            if alarm_int == 0:
-                return "No alarms"
-                
             for bit, description in alarm_bits.items():
                 if alarm_int & bit:
                     alarms.append(description)
             
-            return ", ".join(alarms) if alarms else f"Unknown alarm code: {alarm_hex}"
-        except Exception:
+            return ", ".join(alarms) if alarms else "Unknown alarm"
+        except:
             return f"Invalid alarm code: {alarm_hex}"
-
+        
     def _safe_float_convert(self, value, default=0.0):
         """Safely convert value to float, handling both decimal and hex formats"""
         if isinstance(value, (int, float)):
@@ -579,7 +576,13 @@ class STM23QController:
             # Wait a moment and verify motion started
             time.sleep(0.5)
             status = self.get_motor_status()
-            actual_rpm = abs(status.get('actual_velocity_rpm', 0))
+            
+            # Safely get actual RPM with None handling
+            actual_velocity = status.get('actual_velocity_rpm', 0)
+            if actual_velocity is None:
+                actual_rpm = 0
+            else:
+                actual_rpm = abs(actual_velocity)
             
             if actual_rpm > 5:  # Motor is moving
                 direction_str = "CW" if rpm >= 0 else "CCW"
@@ -612,7 +615,13 @@ class STM23QController:
                 # Wait for motor to actually stop
                 time.sleep(0.5)
                 status = self.get_motor_status()
-                actual_rpm = abs(status.get('actual_velocity_rpm', 0))
+                
+                # Safely get actual RPM with None handling
+                actual_velocity = status.get('actual_velocity_rpm', 0)
+                if actual_velocity is None:
+                    actual_rpm = 0
+                else:
+                    actual_rpm = abs(actual_velocity)
                 
                 if actual_rpm < 5:  # Nearly stopped
                     print(f"✓ Motor stopped ({stop_type})")
@@ -707,8 +716,46 @@ class STM23QController:
                             status['alarm_description'] = self.decode_alarm_code(value)
                     else:
                         status[key] = value
+                else:
+                    # Set default values for failed commands
+                    if key == "position":
+                        status[key] = 0
+                    elif key in ["actual_velocity_rpm", "target_velocity_rpm"]:
+                        status[key] = 0
+                    elif key == "temperature_raw":
+                        status['temperature_c'] = 0.0
+                        status[key] = "0"
+                    elif key == "bus_voltage_raw":
+                        status['bus_voltage_v'] = 0.0
+                        status[key] = "0"
+                    elif key == "commanded_current_raw":
+                        status['commanded_current_a'] = 0.0
+                        status[key] = "0"
+                    elif key == "alarm_code":
+                        status[key] = "0000"
+                        status['has_alarms'] = False
+                    else:
+                        status[key] = "No response"
             except Exception as e:
-                status[key] = f"Error: {e}"
+                # Set safe default values on exception
+                if key == "position":
+                    status[key] = 0
+                elif key in ["actual_velocity_rpm", "target_velocity_rpm"]:
+                    status[key] = 0
+                elif key == "temperature_raw":
+                    status['temperature_c'] = 0.0
+                    status[key] = f"Error: {e}"
+                elif key == "bus_voltage_raw":
+                    status['bus_voltage_v'] = 0.0
+                    status[key] = f"Error: {e}"
+                elif key == "commanded_current_raw":
+                    status['commanded_current_a'] = 0.0
+                    status[key] = f"Error: {e}"
+                elif key == "alarm_code":
+                    status[key] = "0000"
+                    status['has_alarms'] = False
+                else:
+                    status[key] = f"Error: {e}"
         
         return status
 
@@ -956,6 +1003,7 @@ def interactive_motor_demo(controller: STM23QController):
     print("  debug on/off      - Enable/disable debug mode")
     print("  test              - Run connection tests")
     print("  cmd <command>     - Send manual command (e.g., 'cmd CC3')")
+    print("  raw               - Show raw command responses")
     print("  enable            - Enable motor")
     print("  disable           - Disable motor")
     print("  alarms            - Check and clear alarms")
@@ -1047,6 +1095,14 @@ def interactive_motor_demo(controller: STM23QController):
                     print(f"Response: {response}")
                 except Exception as e:
                     print(f"Error: {e}")
+                    
+            elif command.lower() == "raw":
+                # Show raw command responses for debugging
+                print("\nRaw command responses:")
+                raw_commands = ["IP", "IV0", "IV1", "SC", "AL"]
+                for cmd in raw_commands:
+                    response = controller.send_command(cmd, verbose=False)
+                    print(f"  {cmd}: {response}")
                     
             elif command.lower() in ["help", "?"]:
                 print("\nCommands: init, spin <rpm>, speed <rpm>, stop, stop!, status, debug on/off, test, enable, disable, alarms, quit")
