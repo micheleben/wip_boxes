@@ -355,7 +355,7 @@ class STM23QController:
             f"CC{test_current:.1f}",  # CC2.0
         ]
         
-        working_format = None
+        working_current_format = None
         for fmt in current_formats:
             print(f"    Trying format: {fmt}")
             # First ensure motor is disabled
@@ -365,23 +365,52 @@ class STM23QController:
             response = self.send_command(fmt, verbose=self.debug_mode)
             if response == "%":  # Changed from "*" to "%" 
                 print(f"    ✓ Format {fmt} works!")
-                working_format = fmt.replace(str(test_current), "{}")
+                working_current_format = fmt.replace(str(test_current), "{}")
                 break
             elif response:
                 print(f"    ⚠️  Got response '{response}' instead of '%'")
             else:
                 print(f"    ✗ No response for {fmt}")
         
-        if not working_format:
+        if not working_current_format:
             print("✗ Cannot find working current command format")
             return False
         
-        # Motor setup sequence with working format
+        # Test velocity command format
+        print("  Testing velocity command format...")
+        test_velocity = 10.0
+        velocity_formats = [
+            f"VM{test_velocity}",      # VM10.0
+            f"VM{int(test_velocity)}", # VM10  
+            f"VM{test_velocity:.1f}",  # VM10.0
+            f"VM{test_velocity:.0f}",  # VM10
+        ]
+        
+        working_velocity_format = None
+        for fmt in velocity_formats:
+            print(f"    Trying format: {fmt}")
+            response = self.send_command(fmt, verbose=self.debug_mode)
+            if response == "%":
+                print(f"    ✓ Format {fmt} works!")
+                working_velocity_format = fmt.replace(str(test_velocity), "{}")
+                break
+            elif response and response.startswith('?'):
+                print(f"    ✗ Command error for {fmt}")
+            elif response:
+                print(f"    ⚠️  Got response '{response}' for {fmt}")
+            else:
+                print(f"    ✗ No response for {fmt}")
+        
+        if not working_velocity_format:
+            print("⚠️  VM command not working, will skip maximum velocity setting")
+            working_velocity_format = None
+        
+        # Motor setup sequence with working formats
         setup_commands = [
             # Basic motor parameters
             ("MD", "%", "Disable motor for setup"),
-            (working_format.format(current_amps), "%", f"Set running current to {current_amps}A"),
-            (working_format.format(current_amps/2), "%", f"Set idle current to {current_amps/2}A"),
+            (working_current_format.format(current_amps), "%", f"Set running current to {current_amps}A"),
+            (working_current_format.format(current_amps/2), "%", f"Set idle current to {current_amps/2}A"),
             ("CD1.0", "%", "Set idle current delay to 1.0s"),
             (f"EG{microsteps_per_rev}", "%", f"Set resolution to {microsteps_per_rev} steps/rev"),
             
@@ -389,7 +418,6 @@ class STM23QController:
             ("AC20", "%", "Set acceleration to 20 rev/s²"),
             ("DE20", "%", "Set deceleration to 20 rev/s²"),
             ("AM50", "%", "Set max acceleration to 50 rev/s²"),
-            (f"VM{max_velocity}", "%", f"Set max velocity to {max_velocity} rev/s"),
             
             # Jog parameters
             ("JA10", "%", "Set jog acceleration to 10 rev/s²"),
@@ -402,6 +430,14 @@ class STM23QController:
             # Enable motor
             ("ME", "%", "Enable motor"),
         ]
+        
+        # Add VM command only if format works
+        if working_velocity_format:
+            setup_commands.insert(-2, (working_velocity_format.format(max_velocity), "%", f"Set max velocity to {max_velocity} rev/s"))
+        else:
+            print("  Skipping maximum velocity setting (VM command not supported)")
+        
+        print(f"  Proceeding with {len(setup_commands)} configuration commands...")
         
         for command, expected_ack, description in setup_commands:
             print(f"  {description}...")
