@@ -676,8 +676,8 @@ class STM23QController:
             ("SC", "status_code"),
             ("AL", "alarm_code"), 
             ("IP", "position"),
-            ("IV0", "actual_velocity_rpm"),
-            ("IV1", "target_velocity_rpm"),
+            #("IV0", "actual_velocity_rpm"),
+            #("IV1", "target_velocity_rpm"),
             ("IT", "temperature_raw"),
             ("IU", "bus_voltage_raw"),
             ("IC", "commanded_current_raw"),
@@ -756,6 +756,22 @@ class STM23QController:
                     status['has_alarms'] = False
                 else:
                     status[key] = f"Error: {e}"
+        # handle IV0
+        try:
+            response = self.send_command("IV0", verbose=False)
+            if response and "=" in response:
+                value = response.split("=")[1]
+                status['actual_velocity_rpm'] = self._safe_int_convert(value)
+        except:
+                status['actual_velocity_rpm'] = 0
+        # handle IV1
+        try:
+            response = self.send_command("IV1", verbose=False)
+            if response and "=" in response:
+                value = response.split("=")[1]
+                status['target_velocity_rpm'] = self._safe_int_convert(value)
+        except:
+                status['target_velocity_rpm'] = 0
         
         return status
 
