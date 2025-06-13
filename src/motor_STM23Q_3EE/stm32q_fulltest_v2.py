@@ -262,10 +262,18 @@ class STM23QController:
                     return False
         return True
 
+    def _safe_int_convert(self, value, default=0):
+        """Safely convert value to int, handling both decimal and hex formats"""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            if value.startswith('Error'):
+                return default
+
     def decode_alarm_code(self, alarm_hex: str) -> str:
         """Decode alarm code to human readable description"""
         try:
-            alarm_int = int(alarm_hex, 16)
+            alarm_int = int(alarm_hex, 16)  # Convert hex to int
             alarms = []
             
             alarm_bits = {
@@ -284,13 +292,35 @@ class STM23QController:
                 0x2000: "Current Foldback"
             }
             
+            if alarm_int == 0:
+                return "No alarms"
+                
             for bit, description in alarm_bits.items():
                 if alarm_int & bit:
                     alarms.append(description)
             
-            return ", ".join(alarms) if alarms else "Unknown alarm"
-        except:
+            return ", ".join(alarms) if alarms else f"Unknown alarm code: {alarm_hex}"
+        except Exception:
             return f"Invalid alarm code: {alarm_hex}"
+
+    def _safe_float_convert(self, value, default=0.0):
+        """Safely convert value to float, handling both decimal and hex formats"""
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            if value.startswith('Error'):
+                return default
+            try:
+                # Try decimal first
+                return float(value)
+            except ValueError:
+                try:
+                    # Try hex conversion
+                    return float(int(value, 16))
+                except ValueError:
+                    return default
+        return default
+
 
     def decode_model_version(self, mv_response: str) -> dict:
         """
@@ -409,6 +439,7 @@ class STM23QController:
         setup_commands = [
             # Basic motor parameters
             ("MD", "%", "Disable motor for setup"),
+            ("IF D", "%", "Set data format to decimal"),  # Force decimal responses
             (working_current_format.format(current_amps), "%", f"Set running current to {current_amps}A"),
             (working_current_format.format(current_amps/2), "%", f"Set idle current to {current_amps/2}A"),
             ("CD1.0", "%", "Set idle current delay to 1.0s"),
@@ -652,19 +683,22 @@ class STM23QController:
                     else:
                         value = response
                     
-                    # Convert specific values
+                    # Convert specific values with safe conversion
                     if key == "position":
-                        status[key] = int(value)
+                        status[key] = self._safe_int_convert(value)
                     elif key in ["actual_velocity_rpm", "target_velocity_rpm"]:
-                        status[key] = int(value)
+                        status[key] = self._safe_int_convert(value)
                     elif key == "temperature_raw":
-                        status['temperature_c'] = float(value) / 10.0
+                        temp_val = self._safe_float_convert(value) / 10.0
+                        status['temperature_c'] = temp_val
                         status[key] = value
                     elif key == "bus_voltage_raw":
-                        status['bus_voltage_v'] = float(value) / 10.0
+                        voltage_val = self._safe_float_convert(value) / 10.0
+                        status['bus_voltage_v'] = voltage_val
                         status[key] = value
                     elif key == "commanded_current_raw":
-                        status['commanded_current_a'] = float(value) / 100.0
+                        current_val = self._safe_float_convert(value) / 100.0
+                        status['commanded_current_a'] = current_val
                         status[key] = value
                     elif key == "alarm_code":
                         status[key] = value
