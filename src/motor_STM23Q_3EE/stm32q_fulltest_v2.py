@@ -269,6 +269,16 @@ class STM23QController:
         if isinstance(value, str):
             if value.startswith('Error'):
                 return default
+            try:
+                # Try decimal first
+                return int(value)
+            except ValueError:
+                try:
+                    # Try hex conversion
+                    return int(value, 16)
+                except ValueError:
+                    return default
+        return default  # Fallback for any other type
 
     def decode_alarm_code(self, alarm_hex: str) -> str:
         """Decode alarm code to human readable description"""
