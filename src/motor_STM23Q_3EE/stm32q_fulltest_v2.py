@@ -363,12 +363,12 @@ class STM23QController:
             time.sleep(0.2)
             
             response = self.send_command(fmt, verbose=self.debug_mode)
-            if response == "*":
+            if response == "%":  # Changed from "*" to "%" 
                 print(f"    ✓ Format {fmt} works!")
                 working_format = fmt.replace(str(test_current), "{}")
                 break
             elif response:
-                print(f"    ⚠️  Got response '{response}' instead of '*'")
+                print(f"    ⚠️  Got response '{response}' instead of '%'")
             else:
                 print(f"    ✗ No response for {fmt}")
         
@@ -380,24 +380,24 @@ class STM23QController:
         setup_commands = [
             # Basic motor parameters
             ("MD", "%", "Disable motor for setup"),
-            (working_format.format(current_amps), "*", f"Set running current to {current_amps}A"),
-            (working_format.format(current_amps/2), "*", f"Set idle current to {current_amps/2}A"),
-            ("CD1.0", "*", "Set idle current delay to 1.0s"),
-            (f"EG{microsteps_per_rev}", "*", f"Set resolution to {microsteps_per_rev} steps/rev"),
+            (working_format.format(current_amps), "%", f"Set running current to {current_amps}A"),
+            (working_format.format(current_amps/2), "%", f"Set idle current to {current_amps/2}A"),
+            ("CD1.0", "%", "Set idle current delay to 1.0s"),
+            (f"EG{microsteps_per_rev}", "%", f"Set resolution to {microsteps_per_rev} steps/rev"),
             
             # Motion parameters for jogging
-            ("AC20", "*", "Set acceleration to 20 rev/s²"),
-            ("DE20", "*", "Set deceleration to 20 rev/s²"),
-            ("AM50", "*", "Set max acceleration to 50 rev/s²"),
-            (f"VM{max_velocity}", "*", f"Set max velocity to {max_velocity} rev/s"),
+            ("AC20", "%", "Set acceleration to 20 rev/s²"),
+            ("DE20", "%", "Set deceleration to 20 rev/s²"),
+            ("AM50", "%", "Set max acceleration to 50 rev/s²"),
+            (f"VM{max_velocity}", "%", f"Set max velocity to {max_velocity} rev/s"),
             
             # Jog parameters
-            ("JA10", "*", "Set jog acceleration to 10 rev/s²"),
-            ("JL10", "*", "Set jog deceleration to 10 rev/s²"),
-            ("JS1.0", "*", "Set default jog speed to 1 rev/s"),
+            ("JA10", "%", "Set jog acceleration to 10 rev/s²"),
+            ("JL10", "%", "Set jog deceleration to 10 rev/s²"),
+            ("JS1.0", "%", "Set default jog speed to 1 rev/s"),
             
             # Set control mode to commanded velocity (jog mode)
-            ("CM10", "*", "Set control mode to commanded velocity"),
+            ("CM10", "%", "Set control mode to commanded velocity"),
             
             # Enable motor
             ("ME", "%", "Enable motor"),
@@ -490,10 +490,10 @@ class STM23QController:
             
             # Set jog parameters in sequence
             commands = [
-                (f"JA{acceleration}", "*", "Set jog acceleration"),
-                (f"JL{acceleration}", "*", "Set jog deceleration"),
-                (f"JS{rps}", "*", "Set jog speed"),
-                (f"DI{direction}", "*", "Set direction"),
+                (f"JA{acceleration}", "%", "Set jog acceleration"),
+                (f"JL{acceleration}", "%", "Set jog deceleration"),
+                (f"JS{rps}", "%", "Set jog speed"),
+                (f"DI{direction}", "%", "Set direction"),
             ]
             
             for command, expected_ack, description in commands:
@@ -504,7 +504,7 @@ class STM23QController:
                 time.sleep(0.05)  # Small delay between commands
             
             # Start jogging
-            response = self.send_command("CJ", expected_ack="*", verbose=False)
+            response = self.send_command("CJ", expected_ack="%", verbose=False)
             if not response:
                 print("✗ Failed to start jogging")
                 return False
